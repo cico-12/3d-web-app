@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSceneState } from '@/store/sceneState';
+import React from 'react';
 
 function normDeg(deg: number) {
   let d = deg % 360;

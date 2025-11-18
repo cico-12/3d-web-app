@@ -1,4 +1,5 @@
 import { Html, useProgress } from '@react-three/drei';
+import React from 'react';
 
 export default function CanvasLoader() {
   const { active, progress, loaded, total, item } = useProgress();

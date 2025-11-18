@@ -10,6 +10,7 @@ type Id = ModelId;
 function clamp(v: number, min: number, max: number) {
   return Math.min(max, Math.max(min, v));
 }
+
 function debounce<T extends (...a: any[]) => any>(fn: T, ms: number) {
   let t: any;
   return (...args: Parameters<T>) => {
@@ -19,34 +20,51 @@ function debounce<T extends (...a: any[]) => any>(fn: T, ms: number) {
 }
 
 const bounds = { minX: -10, maxX: 10, minZ: -10, maxZ: 10 };
-const MARGIN = 0.005;
 
 function intersectsOBB(
-  aPos: THREE.Vector2, aYaw: number, aHalf: THREE.Vector2,
-  bPos: THREE.Vector2, bYaw: number, bHalf: THREE.Vector2
+  aPos: THREE.Vector2,
+  aYaw: number,
+  aHalf: THREE.Vector2,
+  bPos: THREE.Vector2,
+  bYaw: number,
+  bHalf: THREE.Vector2
 ) {
   const ca = Math.cos(aYaw), sa = Math.sin(aYaw);
   const cb = Math.cos(bYaw), sb = Math.sin(bYaw);
-  const uA0 = new THREE.Vector2(ca, sa);
-  const uA1 = new THREE.Vector2(-sa, ca);
-  const uB0 = new THREE.Vector2(cb, sb);
-  const uB1 = new THREE.Vector2(-sb, cb);
+
+  const aX = new THREE.Vector2(ca, -sa);
+  const aZ = new THREE.Vector2(sa,  ca);
+
+  const bX = new THREE.Vector2(cb, -sb);
+  const bZ = new THREE.Vector2(sb,  cb);
+
+  const R00 = aX.dot(bX);
+  const R01 = aX.dot(bZ);
+  const R10 = aZ.dot(bX);
+  const R11 = aZ.dot(bZ);
+
+  const eps = 1e-6;
+  const AbsR00 = Math.abs(R00) + eps;
+  const AbsR01 = Math.abs(R01) + eps;
+  const AbsR10 = Math.abs(R10) + eps;
+  const AbsR11 = Math.abs(R11) + eps;
 
   const d = new THREE.Vector2().subVectors(bPos, aPos);
-  const dA = new THREE.Vector2(d.dot(uA0), d.dot(uA1));
 
-  const R00 = uA0.dot(uB0), R01 = uA0.dot(uB1);
-  const R10 = uA1.dot(uB0), R11 = uA1.dot(uB1);
-  const eps = 1e-6;
-  const AbsR00 = Math.abs(R00) + eps, AbsR01 = Math.abs(R01) + eps;
-  const AbsR10 = Math.abs(R10) + eps, AbsR11 = Math.abs(R11) + eps;
+  const tA = new THREE.Vector2(d.dot(aX), d.dot(aZ));
 
-  if (Math.abs(dA.x) > aHalf.x + (bHalf.x * AbsR00 + bHalf.y * AbsR01)) return false;
-  if (Math.abs(dA.y) > aHalf.y + (bHalf.x * AbsR10 + bHalf.y * AbsR11)) return false;
+  const aEx = aHalf.x;
+  const aEz = aHalf.y;
+  const bEx = bHalf.x;
+  const bEz = bHalf.y;
 
-  const dB = new THREE.Vector2(d.dot(uB0), d.dot(uB1));
-  if (Math.abs(dB.x) > bHalf.x + (aHalf.x * AbsR00 + aHalf.y * AbsR10)) return false;
-  if (Math.abs(dB.y) > bHalf.y + (aHalf.x * AbsR01 + aHalf.y * AbsR11)) return false;
+  if (Math.abs(tA.x) > aEx + bEx * AbsR00 + bEz * AbsR01) return false;
+  if (Math.abs(tA.y) > aEz + bEx * AbsR10 + bEz * AbsR11) return false;
+
+  const tB = new THREE.Vector2(d.dot(bX), d.dot(bZ));
+
+  if (Math.abs(tB.x) > bEx + aEx * AbsR00 + aEz * AbsR10) return false;
+  if (Math.abs(tB.y) > bEz + aEx * AbsR01 + aEz * AbsR11) return false;
 
   return true;
 }
@@ -59,6 +77,7 @@ function getWorldPosYaw(obj: THREE.Object3D) {
   const e = new THREE.Euler().setFromQuaternion(q, 'YXZ');
   return { p, yaw: e.y };
 }
+
 function yawFromQuat(q: THREE.Quaternion) {
   return new THREE.Euler().setFromQuaternion(q, 'YXZ').y;
 }
@@ -80,12 +99,22 @@ function normDeg(deg: number) {
 export default function ModelItem({ id }: { id: Id }) {
   const outer = useRef<THREE.Group>(null!);
   const inner = useRef<THREE.Group>(null!);
+  const debugRef = useRef<THREE.Group | null>(null);
+
   const { raycaster, camera, pointer, scene } = useThree();
-  const ground = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), []);
+  const ground = useMemo(
+    () => new THREE.Plane(new THREE.Vector3(0, 1, 0), 0),
+    []
+  );
 
   const {
-    models, setModel, setInteracting,
-    selectedId, setSelectedId, rotateTargetDeg, setRotateTargetDeg,
+    models,
+    setModel,
+    setInteracting,
+    selectedId,
+    setSelectedId,
+    rotateTargetDeg,
+    setRotateTargetDeg,
   } = useSceneState();
 
   const me = models[id]!;
@@ -132,19 +161,27 @@ export default function ModelItem({ id }: { id: Id }) {
 
   useEffect(() => {
     if (!inner.current || !outer.current) return;
+
     inner.current.updateWorldMatrix(true, true);
+
     const worldBox = new THREE.Box3().setFromObject(inner.current);
+
     const deltaY = worldBox.min.y;
     if (Math.abs(deltaY) > 1e-6) {
       inner.current.position.y -= deltaY;
       inner.current.updateWorldMatrix(true, true);
     }
+
     const finalBox = new THREE.Box3().setFromObject(inner.current);
     const finalSize = finalBox.getSize(new THREE.Vector3());
 
-    const SHRINK = 0.95;
-    const halfX = (finalSize.x * 0.5) * SHRINK;
-    const halfZ = (finalSize.z * 0.5) * SHRINK;
+    let width = finalSize.x;
+    let depth = finalSize.z;
+
+    let halfX = width * 0.5;
+    let halfZ = depth * 0.5;
+    halfX = Math.max(0, halfX);
+    halfZ = Math.max(0, halfZ);
 
     (outer.current as any).userData.halfXZ = new THREE.Vector2(halfX, halfZ);
   }, [modelScene]);
@@ -168,25 +205,28 @@ export default function ModelItem({ id }: { id: Id }) {
     const a = outer.current as any;
     const b = scene.getObjectByName(otherId) as any;
     if (!a || !b) return false;
-    const aHalf0: THREE.Vector2 = a.userData?.halfXZ;
-    const bHalf0: THREE.Vector2 = b.userData?.halfXZ;
-    if (!aHalf0 || !bHalf0) return false;
 
-    const aHalf = new THREE.Vector2(aHalf0.x + MARGIN, aHalf0.y + MARGIN);
-    const bHalf = new THREE.Vector2(bHalf0.x + MARGIN, bHalf0.y + MARGIN);
+    const aHalf = a.userData?.halfXZ as THREE.Vector2 | undefined;
+    const bHalf = b.userData?.halfXZ as THREE.Vector2 | undefined;
+    if (!aHalf || !bHalf) return false;
 
     const { p: aP, yaw: aYaw } = getWorldPosYaw(a);
     const { p: bP, yaw: bYaw } = getWorldPosYaw(b);
 
     return intersectsOBB(
-      new THREE.Vector2(aP.x, aP.z), aYaw, aHalf,
-      new THREE.Vector2(bP.x, bP.z), bYaw, bHalf
+      new THREE.Vector2(aP.x, aP.z),
+      aYaw,
+      aHalf,
+      new THREE.Vector2(bP.x, bP.z),
+      bYaw,
+      bHalf
     );
   };
 
   const savePoseNow = useCallback(async () => {
     if (!outer.current) return;
-    const p = outer.current.position, q = outer.current.quaternion;
+    const p = outer.current.position;
+    const q = outer.current.quaternion;
     await savePose(id, {
       position: [p.x, p.y, p.z],
       quaternion: [q.x, q.y, q.z, q.w],
@@ -245,45 +285,44 @@ export default function ModelItem({ id }: { id: Id }) {
   }, [savePoseNow, setInteracting]);
 
   useFrame(() => {
-    if (useSceneState.getState().editMode !== 'move') return;
-    if (!draggingRef.current || !outer.current) return;
+    if (useSceneState.getState().editMode === 'move' && draggingRef.current && outer.current) {
+      raycaster.setFromCamera(pointer, camera);
+      const p = new THREE.Vector3();
+      if (raycaster.ray.intersectPlane(ground, p)) {
+        const nx = clamp(p.x + dragOffset.current.x, bounds.minX, bounds.maxX);
+        const nz = clamp(p.z + dragOffset.current.z, bounds.minZ, bounds.maxZ);
 
-    const other = scene.getObjectByName(otherId) as any;
-    const myHalf = (outer.current as any)?.userData?.halfXZ;
-    const otherHalf = other?.userData?.halfXZ;
-    if (!myHalf || !otherHalf) return;
+        const obj = outer.current;
+        const prev = new THREE.Vector2(obj.position.x, obj.position.z);
+        const target = new THREE.Vector2(nx, nz);
 
-    raycaster.setFromCamera(pointer, camera);
-    const p = new THREE.Vector3();
-    if (raycaster.ray.intersectPlane(ground, p)) {
-      const nx = clamp(p.x + dragOffset.current.x, bounds.minX, bounds.maxX);
-      const nz = clamp(p.z + dragOffset.current.z, bounds.minZ, bounds.maxZ);
-
-      const obj = outer.current;
-      const prev = new THREE.Vector2(obj.position.x, obj.position.z);
-      const target = new THREE.Vector2(nx, nz);
-
-      obj.position.set(target.x, 0, target.y);
-      if (!collides()) {
-        lastValidPos.current.copy(obj.position);
-        savePoseDebounced();
-        return;
+        obj.position.set(target.x, 0, target.y);
+        if (!collides()) {
+          lastValidPos.current.copy(obj.position);
+          savePoseDebounced();
+        } else {
+          let lo = 0.0, hi = 1.0;
+          const tmp = new THREE.Vector2();
+          obj.position.set(prev.x, 0, prev.y);
+          for (let i = 0; i < 18; i++) {
+            const mid = (lo + hi) * 0.5;
+            tmp.copy(target).sub(prev).multiplyScalar(mid).add(prev);
+            obj.position.set(tmp.x, 0, tmp.y);
+            if (collides()) hi = mid;
+            else lo = mid;
+          }
+          tmp.copy(target).sub(prev).multiplyScalar(lo).add(prev);
+          obj.position.set(tmp.x, 0, tmp.y);
+          lastValidPos.current.copy(obj.position);
+          savePoseDebounced();
+        }
       }
+    }
 
-      let lo = 0.0, hi = 1.0;
-      const tmp = new THREE.Vector2();
-      obj.position.set(prev.x, 0, prev.y);
-      for (let i = 0; i < 18; i++) {
-        const mid = (lo + hi) * 0.5;
-        tmp.copy(target).sub(prev).multiplyScalar(mid).add(prev);
-        obj.position.set(tmp.x, 0, tmp.y);
-        if (collides()) hi = mid; else lo = mid;
-      }
-      tmp.copy(target).sub(prev).multiplyScalar(lo).add(prev);
-      obj.position.set(tmp.x, 0, tmp.y);
-
-      lastValidPos.current.copy(obj.position);
-      savePoseDebounced();
+    if (debugRef.current && outer.current && selectedId === id) {
+      debugRef.current.position.copy(outer.current.position);
+      debugRef.current.position.y = 0.001;
+      debugRef.current.quaternion.copy(outer.current.quaternion);
     }
   });
 
@@ -294,7 +333,6 @@ export default function ModelItem({ id }: { id: Id }) {
     if (selectedId !== id || useSceneState.getState().editMode !== 'rotate') return;
 
     const obj = outer.current;
-
     const startYaw = yawFromQuat(obj.quaternion);
     const targetYaw = (targetDeg * Math.PI) / 180;
     const delta = shortestAngleDiff(startYaw, targetYaw);
@@ -311,9 +349,8 @@ export default function ModelItem({ id }: { id: Id }) {
     if (!collides()) {
       lastValidQuat.current.copy(obj.quaternion);
       savePoseDebounced();
-
       const appliedYaw = yawFromQuat(obj.quaternion);
-      const appliedDeg = normDeg(appliedYaw * 180 / Math.PI);
+      const appliedDeg = normDeg((appliedYaw * 180) / Math.PI);
       setRotateTargetDeg(id, appliedDeg);
       return;
     }
@@ -322,23 +359,18 @@ export default function ModelItem({ id }: { id: Id }) {
     if (collides()) {
       obj.quaternion.copy(lastValidQuat.current);
       const appliedYaw = yawFromQuat(obj.quaternion);
-      const appliedDeg = normDeg(appliedYaw * 180 / Math.PI);
+      const appliedDeg = normDeg((appliedYaw * 180) / Math.PI);
       setRotateTargetDeg(id, appliedDeg);
       return;
     }
 
-    let lo = 0.0;
-    let hi = 1.0;
-
+    let lo = 0.0, hi = 1.0;
     for (let i = 0; i < 18; i++) {
       const mid = (lo + hi) * 0.5;
       const midYaw = startYaw + delta * mid;
       applyYaw(midYaw);
-      if (collides()) {
-        hi = mid;
-      } else {
-        lo = mid;
-      }
+      if (collides()) hi = mid;
+      else lo = mid;
     }
 
     const finalYaw = startYaw + delta * lo;
@@ -347,42 +379,56 @@ export default function ModelItem({ id }: { id: Id }) {
     if (collides()) {
       obj.quaternion.copy(lastValidQuat.current);
       const appliedYaw = yawFromQuat(obj.quaternion);
-      const appliedDeg = normDeg(appliedYaw * 180 / Math.PI);
+      const appliedDeg = normDeg((appliedYaw * 180) / Math.PI);
       setRotateTargetDeg(id, appliedDeg);
       return;
     }
 
     lastValidQuat.current.copy(obj.quaternion);
     savePoseDebounced();
-
     const appliedYaw = yawFromQuat(obj.quaternion);
-    const appliedDeg = normDeg(appliedYaw * 180 / Math.PI);
+    const appliedDeg = normDeg((appliedYaw * 180) / Math.PI);
     setRotateTargetDeg(id, appliedDeg);
   }, [targetDeg, id, selectedId, savePoseDebounced, setRotateTargetDeg]);
 
   const isSelected = selectedId === id;
 
   return (
-    <group
-      name={id}
-      ref={outer}
-      position={[...me.position]}
-      onPointerDown={onPointerDown}
-      onClick={onClickSelect}
-    >
-      {isSelected && (
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.001, 0]}>
-          <ringGeometry args={[0.01, 1.2, 48]} />
-          <meshBasicMaterial color="#4a90e2" transparent opacity={0.35} />
-        </mesh>
-      )}
-
-      <group ref={inner}>
-        <primitive object={modelScene} />
+    <>
+      <group
+        name={id}
+        ref={outer}
+        position={[...me.position]}
+        onPointerDown={onPointerDown}
+        onClick={onClickSelect}
+      >
+        <group ref={inner}>
+          <primitive object={modelScene} />
+        </group>
       </group>
-    </group>
+
+      {isSelected && (
+        <group ref={debugRef}>
+          {(() => {
+            const half = (outer.current as any)?.userData?.halfXZ as THREE.Vector2 | undefined;
+            if (!half) return null;
+            return (
+              <mesh rotation={[-Math.PI / 2, 0, 0]}>
+                <planeGeometry args={[half.x * 2, half.y * 2]} />
+                <meshBasicMaterial
+                  color="red"
+                  wireframe
+                  transparent
+                  opacity={0.4}
+                />
+              </mesh>
+            );
+          })()}
+        </group>
+      )}
+    </>
   );
 }
 
-useGLTF.preload('/models/table.glb');
-useGLTF.preload('/models/game_ready_rustic_table_with_chairs.glb');
+useGLTF.preload('/models/White_3DB24.glb');
+useGLTF.preload('/models/White_B33.glb');

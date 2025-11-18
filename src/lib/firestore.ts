@@ -34,7 +34,7 @@ export async function ensureDefaults() {
     await setDoc(aRef, {
       position: [0, 0, 0],
       quaternion: [0, 0, 0, 1],
-      name: 'table.glb',
+      name: 'White_3DB24.glb',
     }, { merge: true });
   }
 
@@ -42,7 +42,7 @@ export async function ensureDefaults() {
     await setDoc(bRef, {
       position: [4, 0, 0],
       quaternion: [0, 0, 0, 1],
-      name: 'game_ready_rustic_table_with_chairs.glb',
+      name: 'White_B33.glb',
     }, { merge: true });
   }
 }

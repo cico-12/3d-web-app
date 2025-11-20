@@ -230,7 +230,7 @@ export default function TextBoxHUD() {
 const wrap: CSSProperties = {
   position: 'absolute',
   left: '85%',
-  bottom: 80,
+  bottom: 250,
   transform: 'translateX(-50%)',
   background: 'rgba(255,255,255,0.96)',
   border: '1px solid #e8e8ee',

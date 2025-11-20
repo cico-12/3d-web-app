@@ -85,7 +85,7 @@ export default function SceneCanvas() {
                 enabled={!isInteracting}
                 enableDamping
                 minDistance={3}
-                maxDistance={20}
+                maxDistance={40}
                 maxPolarAngle={Math.PI / 2 - 0.1}
               />
             </>

@@ -23,10 +23,10 @@ export default function Toolbar() {
       <div style={{ width:1, height:20, background:'#ddd', margin:'0 8px' }} />
 
       <strong>Edit:</strong>
-      <button onClick={() => setEditMode('move')}   disabled={editMode==='move'}>Move</button>
       <button onClick={() => setEditMode('rotate')} disabled={editMode==='rotate'}>Rotate</button>
+      <button onClick={() => setEditMode('textCreate')} disabled={editMode==='textCreate'}>Text Box</button>
 
-      <span style={{opacity:.7,marginLeft:8}}>Tip: press “R”</span>
+      <span style={{opacity:.7,marginLeft:8}}>Tip: press “R” to activate rotation hud</span>
     </div>
   );
 }

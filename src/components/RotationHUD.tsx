@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSceneState } from '@/store/sceneState';
-import React from 'react';
+import { updateTextBox3D as updateTextBox3DDb, TextBox3DRecord } from '@/lib/firestore';
 
 function normDeg(deg: number) {
   let d = deg % 360;
@@ -12,27 +12,41 @@ export default function RotationHUD() {
   const {
     editMode,
     selectedId,
+    selectedTextBoxId,
     models,
+    textBoxes3D,
     rotateTargetDeg,
     setRotateTargetDeg,
     setEditMode,
-  } = useSceneState();
+    updateTextBox3D: updateTextBox3DLocal,
+  } = useSceneState() as any;
 
   const pose = selectedId ? models[selectedId] : null;
+  const selectedText =
+    selectedTextBoxId ? textBoxes3D.find((b: any) => b.id === selectedTextBoxId) : null;
+
+  const isModelTarget = !!selectedId;
+  const isTextTarget = !selectedId && !!selectedTextBoxId && !!selectedText;
 
   const storeDeg = useMemo(() => {
-    if (!selectedId) return 0;
+    if (isModelTarget && selectedId) {
+      const target = rotateTargetDeg[selectedId];
+      if (target != null) return normDeg(target);
 
-    const target = rotateTargetDeg[selectedId];
-    if (target != null) return normDeg(target);
+      if (!pose) return 0;
+      const [x, y, z, w] = pose.quaternion;
+      const t3 = 2 * (w * y + x * z);
+      const t4 = 1 - 2 * (y * y + z * z);
+      const yaw = Math.atan2(t3, t4);
+      return normDeg((yaw * 180) / Math.PI);
+    }
 
-    if (!pose) return 0;
-    const [x, y, z, w] = pose.quaternion;
-    const t3 = 2 * (w * y + x * z);
-    const t4 = 1 - 2 * (y * y + z * z);
-    const yaw = Math.atan2(t3, t4);
-    return normDeg((yaw * 180) / Math.PI);
-  }, [selectedId, rotateTargetDeg, pose]);
+    if (isTextTarget && selectedText) {
+      return normDeg(selectedText.rotationDeg ?? 0);
+    }
+
+    return 0;
+  }, [isModelTarget, isTextTarget, selectedId, rotateTargetDeg, pose, selectedText]);
 
   const [tempDeg, setTempDeg] = useState(storeDeg);
   useEffect(() => {
@@ -43,9 +57,24 @@ export default function RotationHUD() {
     setEditMode('move');
   };
 
+  const applyDeg = async (deg: number) => {
+    const v = normDeg(deg);
+    setTempDeg(v);
+
+    if (isModelTarget && selectedId) {
+      setRotateTargetDeg(selectedId, v);
+      return;
+    }
+
+    if (isTextTarget && selectedTextBoxId) {
+      updateTextBox3DLocal(selectedTextBoxId, { rotationDeg: v });
+      await updateTextBox3DDb(selectedTextBoxId, { rotationDeg: v });
+    }
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!selectedId) return;
+      if (!selectedId && !selectedTextBoxId) return;
 
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -56,30 +85,27 @@ export default function RotationHUD() {
 
       if (e.key.toLowerCase() === 'q') {
         const next = normDeg(tempDeg - 15);
-        setTempDeg(next);
-        setRotateTargetDeg(selectedId, next);
+        e.preventDefault();
+        applyDeg(next);
       } else if (e.key.toLowerCase() === 'e') {
         const next = normDeg(tempDeg + 15);
-        setTempDeg(next);
-        setRotateTargetDeg(selectedId, next);
+        e.preventDefault();
+        applyDeg(next);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [editMode, selectedId, tempDeg, setRotateTargetDeg, setEditMode]);
+  }, [editMode, selectedId, selectedTextBoxId, tempDeg]);
 
-  if (editMode !== 'rotate' || !selectedId) return null;
+  if (editMode !== 'rotate' || (!selectedId && !selectedTextBoxId)) return null;
 
   const nudge = (delta: number) => {
     const next = normDeg(tempDeg + delta);
-    setTempDeg(next);
-    setRotateTargetDeg(selectedId, next);
+    applyDeg(next);
   };
 
   const snapTo = (deg: number) => {
-    const v = normDeg(deg);
-    setTempDeg(v);
-    setRotateTargetDeg(selectedId, v);
+    applyDeg(deg);
   };
 
   return (
@@ -93,7 +119,9 @@ export default function RotationHUD() {
       </button>
 
       <div style={header}>
-        <span style={title}>Rotate selected</span>
+        <span style={title}>
+          Rotate {isModelTarget ? 'model' : 'text box'}
+        </span>
         <span style={readout}>{Math.round(tempDeg)}°</span>
       </div>
 
@@ -115,8 +143,7 @@ export default function RotationHUD() {
           value={tempDeg}
           onChange={(e) => {
             const v = Number(e.target.value);
-            setTempDeg(v);
-            setRotateTargetDeg(selectedId, v);
+            applyDeg(v);
           }}
           style={slider}
         />
@@ -142,8 +169,7 @@ export default function RotationHUD() {
           value={tempDeg}
           onChange={(e) => {
             const v = normDeg(Number(e.target.value));
-            setTempDeg(v);
-            setRotateTargetDeg(selectedId, v);
+            applyDeg(v);
           }}
           style={num}
         />°
@@ -172,7 +198,7 @@ export default function RotationHUD() {
 
 const wrap: React.CSSProperties = {
   position: 'absolute',
-  left: '50%',
+  left: '80%',
   bottom: 18,
   transform: 'translateX(-50%)',
   background: 'rgba(255,255,255,0.96)',

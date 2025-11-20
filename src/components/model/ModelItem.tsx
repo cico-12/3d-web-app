@@ -21,6 +21,7 @@ function debounce<T extends (...a: any[]) => any>(fn: T, ms: number) {
 
 const bounds = { minX: -10, maxX: 10, minZ: -10, maxZ: 10 };
 
+
 function intersectsOBB(
   aPos: THREE.Vector2,
   aYaw: number,
@@ -160,37 +161,31 @@ export default function ModelItem({ id }: { id: Id }) {
   }, [rawClone, norm]);
 
   useEffect(() => {
-    if (!inner.current || !outer.current) return;
+    if (!outer.current) return;
 
-    inner.current.updateWorldMatrix(true, true);
+    const tmp = rawClone.clone(true);
+    const box = new THREE.Box3().setFromObject(tmp);
+    const size = box.getSize(new THREE.Vector3());
 
-    const worldBox = new THREE.Box3().setFromObject(inner.current);
-
-    const deltaY = worldBox.min.y;
-    if (Math.abs(deltaY) > 1e-6) {
-      inner.current.position.y -= deltaY;
-      inner.current.updateWorldMatrix(true, true);
-    }
-
-    const finalBox = new THREE.Box3().setFromObject(inner.current);
-    const finalSize = finalBox.getSize(new THREE.Vector3());
-
-    let width = finalSize.x;
-    let depth = finalSize.z;
+    const width = size.x * norm.scale;
+    const depth = size.z * norm.scale;
 
     let halfX = width * 0.5;
     let halfZ = depth * 0.5;
+
     halfX = Math.max(0, halfX);
     halfZ = Math.max(0, halfZ);
 
     (outer.current as any).userData.halfXZ = new THREE.Vector2(halfX, halfZ);
-  }, [modelScene]);
+  }, [rawClone, norm.scale, me.name]);
 
   const draggingRef = useRef(false);
   const dragOffset = useRef(new THREE.Vector3());
 
   const lastValidPos = useRef(new THREE.Vector3(...me.position));
-  const lastValidQuat = useRef(new THREE.Quaternion(...me.quaternion));
+  const lastValidQuat = useRef(
+    new THREE.Quaternion(...me.quaternion)
+  );
 
   useEffect(() => {
     if (!outer.current || draggingRef.current) return;
@@ -245,10 +240,13 @@ export default function ModelItem({ id }: { id: Id }) {
     [savePoseNow]
   );
 
-  const onClickSelect = useCallback((e: any) => {
-    e.stopPropagation();
-    setSelectedId(id);
-  }, [id, setSelectedId]);
+  const onClickSelect = useCallback(
+    (e: any) => {
+      e.stopPropagation();
+      setSelectedId(id);
+    },
+    [id, setSelectedId]
+  );
 
   const onPointerDown = (e: any) => {
     onClickSelect(e);
@@ -285,7 +283,11 @@ export default function ModelItem({ id }: { id: Id }) {
   }, [savePoseNow, setInteracting]);
 
   useFrame(() => {
-    if (useSceneState.getState().editMode === 'move' && draggingRef.current && outer.current) {
+    if (
+      useSceneState.getState().editMode === 'move' &&
+      draggingRef.current &&
+      outer.current
+    ) {
       raycaster.setFromCamera(pointer, camera);
       const p = new THREE.Vector3();
       if (raycaster.ray.intersectPlane(ground, p)) {
@@ -410,7 +412,9 @@ export default function ModelItem({ id }: { id: Id }) {
       {isSelected && (
         <group ref={debugRef}>
           {(() => {
-            const half = (outer.current as any)?.userData?.halfXZ as THREE.Vector2 | undefined;
+            const half = (outer.current as any)?.userData?.halfXZ as
+              | THREE.Vector2
+              | undefined;
             if (!half) return null;
             return (
               <mesh rotation={[-Math.PI / 2, 0, 0]}>
